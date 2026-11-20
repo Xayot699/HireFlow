@@ -6,6 +6,7 @@ export type RawJobsSearchParams = {
   type?: string | string[];
   sort?: string | string[];
   page?: string | string[];
+  perPage?: string | string[];
 };
 
 export type JobsFilters = {
@@ -19,6 +20,7 @@ export type JobsFilters = {
     | "contract";
   sort: "newest" | "salary_high" | "salary_low";
   page: number;
+  pageSize: 3 | 6 | 9;
 };
 
 function getValue(
@@ -94,6 +96,10 @@ export function parseJobsFilters(
       ? Math.min(rawPage, 1000)
       : 1;
 
+  const rawPageSize = Number(getValue(params.perPage));
+  const pageSize: JobsFilters["pageSize"] =
+    rawPageSize === 6 || rawPageSize === 9 ? rawPageSize : 3;
+
   return {
     q,
     location,
@@ -101,6 +107,7 @@ export function parseJobsFilters(
     employmentType,
     sort,
     page,
+    pageSize,
   };
 }
 
@@ -129,6 +136,10 @@ export function buildJobsUrl(
 
   if (filters.sort !== "newest") {
     params.set("sort", filters.sort);
+  }
+
+  if (filters.pageSize !== 3) {
+    params.set("perPage", String(filters.pageSize));
   }
 
   if (page > 1) {

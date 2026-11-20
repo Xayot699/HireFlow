@@ -14,12 +14,43 @@ export type JobRow = {
   salary_max: number;
 
   description: string;
-  requirements: string[];
-  skills: string[];
+  requirements: unknown;
+  skills: unknown;
 
   status: JobStatus;
   created_at: string;
 };
+
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value !== "string") return [];
+
+  let normalized = value.trim();
+  if (!normalized) return [];
+
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    try {
+      const parsed: unknown = JSON.parse(normalized);
+      if (Array.isArray(parsed)) return toStringArray(parsed);
+    } catch {
+      // Fall through to parsing a plain or PostgreSQL-style array string.
+    }
+  }
+
+  if (normalized.startsWith("{") && normalized.endsWith("}")) {
+    normalized = normalized.slice(1, -1);
+  }
+
+  return (normalized.match(/"(?:[^"\\]|\\.)*"|[^,]+/g) ?? [])
+    .map((item) => item.trim().replace(/^"|"$/g, "").replace(/\\"/g, '"'))
+    .filter((item) => item && item.toUpperCase() !== "NULL");
+}
 
 export function mapJob(row: JobRow): Job {
   return {
@@ -35,8 +66,8 @@ export function mapJob(row: JobRow): Job {
     salaryMax: row.salary_max,
 
     description: row.description,
-    requirements: row.requirements,
-    skills: row.skills,
+    requirements: toStringArray(row.requirements),
+    skills: toStringArray(row.skills),
 
     status: row.status,
     createdAt: row.created_at,

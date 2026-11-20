@@ -1,65 +1,149 @@
-import { jobs } from "@/data/jobs";
+import Link from "next/link";
+import { Suspense } from "react";
 
-const statusStyles: Record<string, string> = {
+import { requireAdmin } from "@/lib/auth";
+import { updateJobStatus } from "@/features/jobs/status-actions";
+import { getLocale, translate, type Locale } from "@/lib/i18n";
+
+type AdminJob = {
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  status: "draft" | "published" | "archived";
+  created_at: string;
+  views_count: number;
+};
+
+const statusStyles: Record<AdminJob["status"], string> = {
   draft: "bg-[#f7efd9] text-[#765f2e]",
   published: "bg-[#edf4df] text-[#3d6847]",
   archived: "bg-[#eeeee7] text-[#68736b]",
 };
 
-export default function AdminJobsPage() {
+async function JobsTable({ locale }: { locale: Locale }) {
+  const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
+  const { supabase } = await requireAdmin();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id, title, company, location, status, created_at, views_count")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("ADMIN JOBS ERROR:", error.code, error.message);
+    throw new Error("Failed to load jobs.");
+  }
+
+  const jobs = (data ?? []) as AdminJob[];
+
+  const { data: applicationRows, error: applicationError } = await supabase
+    .from("applications")
+    .select("job_id, status");
+
+  if (applicationError) {
+    console.error("ADMIN JOB APPLICATION COUNTS ERROR:", applicationError.code, applicationError.message);
+    throw new Error("Failed to load job application counts.");
+  }
+
+  const applicationsByJob = new Map<string, { total: number; accepted: number }>();
+  for (const application of (applicationRows ?? []) as { job_id: string; status: string }[]) {
+    const counts = applicationsByJob.get(application.job_id) ?? { total: 0, accepted: 0 };
+    counts.total += 1;
+    if (application.status === "accepted") counts.accepted += 1;
+    applicationsByJob.set(application.job_id, counts);
+  }
+
+  if (jobs.length === 0) {
+    return <p className="p-8 text-sm text-[#68736b]">{t("noVacancies")}</p>;
+  }
+
   return (
-    <main className="mx-auto max-w-7xl p-5 sm:p-8 lg:p-10">
+    <div className="stagger-enter divide-y divide-[#17231d]/10">
+      {jobs.map((job) => (
+        <article key={job.id} className="site-card flex flex-wrap items-center justify-between gap-4 p-6 transition hover:bg-[#f4f3ec]">
+          <div className="min-w-48">
+            <h2 className="font-bold text-[#17231d]">{job.title}</h2>
+            <p className="mt-1 text-sm text-[#68736b]">{job.company} · {job.location}</p>
+            <p className="mt-2 text-xs font-medium text-[#8b948b]">
+              {(Number(job.views_count) || 0).toLocaleString()} {t("views")} · {applicationsByJob.get(job.id)?.total ?? 0} {t("applicationCount")} · {applicationsByJob.get(job.id)?.accepted ?? 0} {t("acceptedCount")}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className={`rounded-full px-3 py-1.5 text-xs font-bold capitalize ${statusStyles[job.status]}`}>
+              {t(job.status)}
+            </span>
+            <form action={updateJobStatus} className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="jobId" value={job.id} />
+              <label className="sr-only" htmlFor={`status-${job.id}`}>{t("status")}: {job.title}</label>
+              <select
+                id={`status-${job.id}`}
+                name="status"
+                defaultValue={job.status}
+                className="rounded-lg border border-[#17231d]/15 bg-white px-3 py-2 text-sm text-[#17231d]"
+              >
+                <option value="draft">{t("draft")}</option>
+                <option value="published">{t("published")}</option>
+                <option value="archived">{t("archived")}</option>
+              </select>
+              <button type="submit" className="rounded-full border border-[#17231d]/15 px-4 py-2 text-sm font-bold text-[#315a42] transition hover:bg-[#e8ecdf]">
+                {t("saveStatus")}
+              </button>
+            </form>
+            <Link
+              href={`/admin/jobs/${encodeURIComponent(job.id)}/edit`}
+              className="rounded-full border border-[#17231d]/15 px-4 py-2 text-sm font-bold text-[#315a42] transition hover:bg-[#e8ecdf]"
+            >
+              {t("edit")}
+            </Link>
+            {job.status === "archived" ? (
+              <form action={updateJobStatus}>
+                <input type="hidden" name="jobId" value={job.id} />
+                <input type="hidden" name="status" value="published" />
+                <button type="submit" className="rounded-full bg-[#edf4df] px-4 py-2 text-sm font-bold text-[#3d6847] transition hover:bg-[#dcebc7]">
+                  {t("restorePublish")}
+                </button>
+              </form>
+            ) : (
+              <form action={updateJobStatus}>
+                <input type="hidden" name="jobId" value={job.id} />
+                <input type="hidden" name="status" value="archived" />
+                <button type="submit" className="rounded-full border border-[#17231d]/15 px-4 py-2 text-sm font-bold text-[#68736b] transition hover:bg-[#eeeee7]">
+                  {t("archive")}
+                </button>
+              </form>
+            )}
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+export default async function AdminJobsPage() {
+  const locale = await getLocale();
+  const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
+  return (
+    <main className="site-page-enter mx-auto max-w-7xl p-5 sm:p-8 lg:p-10">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="eyebrow text-[#536c51]">Your openings</p>
-          <h1 className="display-serif mt-2 text-4xl text-[#17231d] sm:text-5xl">Manage jobs</h1>
-          <p className="mt-2 text-[#68736b]">A complete view of every job in your workspace.</p>
+          <p className="eyebrow text-[#536c51]">{t("yourOpenings")}</p>
+          <h1 className="display-serif mt-2 text-4xl text-[#17231d] sm:text-5xl">{t("manageJobsTitle")}</h1>
+          <p className="mt-2 text-[#68736b]">{t("manageJobsDescription")}</p>
         </div>
-        <span className="rounded-full border border-[#17231d]/15 bg-[#fbfaf5] px-4 py-2 text-sm font-semibold text-[#68736b]">
-          {jobs.length} total jobs
-        </span>
+        <Link href="/admin/jobs/new" className="site-cta rounded-full bg-[#17231d] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#315a42]">
+          + {t("createJob")}
+        </Link>
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-[#17231d]/10 bg-[#fbfaf5] shadow-[0_8px_30px_rgba(23,35,29,0.04)]">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#17231d]/10 px-6 py-5 sm:px-7">
-          <div>
-            <h2 className="font-black text-[#17231d]">All vacancies</h2>
-            <p className="mt-1 text-sm text-[#68736b]">Draft, published, and archived listings</p>
-          </div>
-          <span className="rounded-xl bg-[#eeeee7] px-3 py-2 text-xs font-bold uppercase tracking-wider text-[#68736b]">Demo data</span>
+      <section className="overflow-hidden rounded-3xl border border-[#17231d]/10 bg-[#fbfaf5] shadow-[0_8px_30px_rgba(23,35,29,0.04)]">
+        <div className="border-b border-[#17231d]/10 px-6 py-5 sm:px-7">
+          <h2 className="font-black text-[#17231d]">{t("allVacancies")}</h2>
+          <p className="mt-1 text-sm text-[#68736b]">{t("workspaceJobs")}</p>
         </div>
-
-        <div className="divide-y divide-[#17231d]/10">
-          {jobs.map((job) => (
-            <div key={job.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-5 transition hover:bg-[#f4f3ec] sm:px-7">
-              <div>
-                <div className="flex items-center gap-3">
-                  <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#e8ecdf] font-black text-[#315a42]">{job.company.slice(0, 1)}</span>
-                  <div>
-                    <h3 className="font-bold text-[#17231d]">{job.title}</h3>
-                    <p className="mt-1 text-sm text-[#68736b]">{job.company} <span className="px-1 text-[#a2aaa0]">·</span> {job.location}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3 sm:gap-6">
-                <div className="hidden text-right sm:block">
-                  <p className="text-sm font-bold text-[#334139]">${job.salaryMin.toLocaleString("en-US")} – ${job.salaryMax.toLocaleString("en-US")}</p>
-                  <p className="mt-1 text-xs text-[#8b948b]">{job.workMode} · {job.employmentType.replace("_", "-")}</p>
-                </div>
-                <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold capitalize ${statusStyles[job.status]}`}>
-                  <span className="size-1.5 rounded-full bg-current" />
-                  {job.status}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <p className="mt-5 rounded-2xl border border-[#536c51]/15 bg-[#e8ecdf] px-5 py-4 text-sm leading-6 text-[#536c51]">
-        <strong>Coming next:</strong> Create, edit, publish, and archive actions will be added in a future lesson.
-      </p>
+        <Suspense fallback={<p className="p-8 text-sm text-[#68736b]">{t("loadingJobs")}</p>}>
+          <JobsTable locale={locale} />
+        </Suspense>
+      </section>
     </main>
   );
 }

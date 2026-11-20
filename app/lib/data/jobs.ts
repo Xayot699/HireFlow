@@ -9,9 +9,6 @@ import type {
   JobsFilters,
 } from "@/lib/jobs/filters";
 
-// Har sahifada nechta vakansiya?
-export const PAGE_SIZE = 3;
-
 // Supabase'dan olinadigan ustunlar
 const jobColumns = `
   id,
@@ -95,12 +92,31 @@ export async function searchJobs(
 ): Promise<SearchJobsResult> {
   const supabase = await createClient();
 
+  let countQuery = supabase
+    .from("jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "published");
+
+  if (filters.q) countQuery = countQuery.ilike("title", `%${filters.q}%`);
+  if (filters.location) countQuery = countQuery.eq("location", filters.location);
+  if (filters.workMode) countQuery = countQuery.eq("work_mode", filters.workMode);
+  if (filters.employmentType) countQuery = countQuery.eq("employment_type", filters.employmentType);
+
+  const { count, error: countError } = await countQuery;
+  if (countError) {
+    console.error("COUNT JOBS ERROR:", countError.code, countError.message);
+    throw new Error("Failed to count matching jobs.");
+  }
+
+  const total = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / filters.pageSize));
+  // Old or stale page links may point beyond the last page after filters change.
+  const safePage = Math.min(filters.page, totalPages);
+
   // Query yaratamiz, lekin hali bajarilmaydi.
   let query = supabase
     .from("jobs")
-    .select(jobColumns, {
-      count: "exact",
-    })
+    .select(jobColumns)
     .eq("status", "published");
 
   // Title bo'yicha case-insensitive search
@@ -169,17 +185,24 @@ export async function searchJobs(
   }
 
   // Pagination
-  const from = (filters.page - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
+  const from = (safePage - 1) * filters.pageSize;
+  const to = from + filters.pageSize - 1;
 
   const {
     data,
-    count,
     error,
   } = await query.range(from, to);
 
   if (error) {
-    console.error("SEARCH JOBS ERROR:", error);
+    console.error(
+      "SEARCH JOBS ERROR:",
+      JSON.stringify({
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      })
+    );
     throw new Error(
       "Failed to search jobs."
     );
@@ -187,7 +210,7 @@ export async function searchJobs(
 
   return {
     jobs: ((data ?? []) as JobRow[]).map(mapJob),
-    total: count ?? 0,
-    pageSize: PAGE_SIZE,
+    total,
+    pageSize: filters.pageSize,
   };
 }
